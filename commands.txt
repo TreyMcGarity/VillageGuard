@@ -1,6 +1,0 @@
-inv
-buy broadsword
-inv
-equip broadsword
-status
-quit
