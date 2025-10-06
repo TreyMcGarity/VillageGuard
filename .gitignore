@@ -1,0 +1,15 @@
+# Compiled classes
+/out
+/src/out
+/backup_classes
+*.class
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# Java
+target/
+*.log
+
