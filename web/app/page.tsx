@@ -32,8 +32,7 @@ export default function Home() {
 
   function runAction(action: GameAction) {
     setGame((current) => applyAction(current, action));
-    const [command, setCommand] = useState("");
-    const [showLog, setShowLog] = useState(false);
+    setCommand("");
   }
 
   function submitCommand(value: string) {
