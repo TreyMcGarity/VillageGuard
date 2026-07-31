@@ -13,3 +13,9 @@
 target/
 *.log
 
+# Web app
+/web/node_modules/
+/web/.next/
+/web/out/
+/web/.turbo/
+

@@ -1,40 +1,49 @@
-Hello World Java project
+# VillageGuard
 
-Files:
-- src/HelloWorld.java — simple Hello World program
+VillageGuard is now moving toward a browser-based version. The current implementation work lives in the `web/` folder as a client-only Next.js app that can be exported statically for GitHub Pages.
 
-Notes
-- `javac` is silent on success; it only prints output when there are compilation errors.
+## Current status
 
-Quick usage (no scripts required)
+- The original Java console game still exists in `src/`.
+- The new browser build is being developed in `web/`.
+- The first web slice is already set up to run without a backend and to export static HTML.
 
-1) Compile from the `src` directory (recommended):
+## Web app
 
-```
-cd src
-javac .\HelloWorld.java
-```
+Install dependencies:
 
-If compilation succeeds there will be no output and a `HelloWorld.class` file will be created in the same directory.
-
-2) Run from the same `src` directory:
-
-```
-java HelloWorld
+```bash
+cd web
+npm install
 ```
 
-Alternative: compile from the project root and run with the classpath pointing to `src`:
+Run the development server:
 
-```
-javac src\HelloWorld.java
-java -cp src HelloWorld
-```
-
-Optional: compile to an `out` directory (keeps sources and classes separated):
-
-```
-javac -d out src\HelloWorld.java
-java -cp out HelloWorld
+```bash
+npm run dev
 ```
 
-If `javac` or `java` are not found, install a JDK (Adoptium or Oracle) and make sure the JDK's `bin` folder is on your PATH.
+Create a production build for static hosting:
+
+```bash
+npm run build
+```
+
+The build is configured for static export, which makes it compatible with GitHub Pages.
+
+## Planned browser gameplay
+
+- Keep the game text-based for now, but render it as a polished UI.
+- Move commands into buttons and panels instead of terminal input.
+- Keep the game client-only, with no Express API.
+- Add stronger visual styling before introducing more complex art or effects.
+
+## Project files
+
+- `src/` - original Java sources for the console version
+- `web/` - Next.js frontend in progress
+
+## Notes
+
+- `web/` is the active implementation path for the browser version.
+- GitHub Pages support will come from the exported static build in `web/out`.
