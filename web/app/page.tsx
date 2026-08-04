@@ -145,6 +145,8 @@ export default function Home() {
           <p>{getLocationPrompt(game)}</p>
         </div>
 
+        <p className="combat-feed">Latest: {game.log[0]}</p>
+
         {game.groundWeapon ? (
           <div className="pickup-card">
             <p className="scene-kicker">Item here</p>

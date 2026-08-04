@@ -483,7 +483,7 @@ export function applyAction(state: GameState, action: GameAction): GameState {
         return pushLog(state, "You are already in a raid.");
       }
 
-      return pushLog(
+      const raidState = pushLog(
         {
           ...state,
           location: "outside",
@@ -494,6 +494,9 @@ export function applyAction(state: GameState, action: GameAction): GameState {
         },
         "A bandit raid begins outside the gate."
       );
+
+      // The raid opens with an immediate enemy swing so the player sees incoming damage right away.
+      return enemyTurn(raidState);
     }
     case "attack": {
       if (!state.enemy) {
@@ -582,6 +585,22 @@ function enemyTurn(state: GameState): GameState {
   const incoming = banditAttack();
   const appliedDamage = state.defending ? Math.ceil(incoming / 2) : incoming;
   const nextHp = Math.max(0, state.playerHp - appliedDamage);
+  const attackerLabel = state.enemy.name.toLowerCase().includes("captain") ? "bandit captain" : "bandit";
+
+  if (nextHp === 0) {
+    return pushLog(
+      {
+        ...state,
+        playerHp: state.playerMaxHp,
+        enemy: null,
+        defending: false,
+        location: "village",
+        sceneTitle: "A bandit strike drops you, but the village pulls you back to safety.",
+        sceneBody: "You recover in the barracks at full health. Restock and return when ready."
+      },
+      `A ${attackerLabel} strikes you. You lose ${appliedDamage} life and collapse. Villagers drag you back to the barracks (HP ${state.playerMaxHp}/${state.playerMaxHp}).`
+    );
+  }
 
   return pushLog(
     {
@@ -598,7 +617,7 @@ function enemyTurn(state: GameState): GameState {
           : "The fight is still active and the combat actions remain available."
     },
     state.defending
-      ? `You block part of the blow and take ${appliedDamage} damage.`
-      : `The bandit hits back for ${appliedDamage} damage.`
+      ? `A ${attackerLabel} strikes you. You block part of the blow and lose ${appliedDamage} life (HP ${nextHp}/${state.playerMaxHp}).`
+      : `A ${attackerLabel} strikes you. You lose ${appliedDamage} life (HP ${nextHp}/${state.playerMaxHp}).`
   );
 }
