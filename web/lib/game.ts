@@ -12,7 +12,8 @@ export type GameAction =
   | { type: "triggerRaid" }
   | { type: "attack" }
   | { type: "defend" }
-  | { type: "run" };
+  | { type: "run" }
+  | { type: "setTarget"; index: number };
 
 export interface ActionOption {
   key: string;
@@ -47,7 +48,8 @@ export interface GameState {
   groundWeapon: string | null;
   inventory: string[];
   equipped: string | null;
-  enemy: Enemy | null;
+  enemies: Enemy[];
+  targetIndex: number;
   defending: boolean;
   sceneTitle: string;
   sceneBody: string;
@@ -148,17 +150,68 @@ function damageForWeapon(weapon: string | null) {
   return 2;
 }
 
+const BANDIT_ATTACK_VERBS = [
+  "slashes at you",
+  "lunges with a blade",
+  "swings wildly",
+  "drives a fist into your side",
+  "throws a heavy blow",
+  "feints then strikes"
+];
+
+const CAPTAIN_ATTACK_VERBS = [
+  "barks an order and charges",
+  "swings a heavy axe",
+  "drives a shield-bash into you",
+  "steps forward with a brutal cut",
+  "roars and strikes hard"
+];
+
 function banditAttack() {
   return randomInt(1, 4);
 }
 
-function makeEnemy() {
-  const hp = randomInt(6, 9);
-  return {
-    name: hp > 7 ? "Bandit Captain" : "Bandit",
-    hp,
-    maxHp: hp
-  } satisfies Enemy;
+function enemyAttackVerb(name: string) {
+  const isCaptain = name.toLowerCase().includes("captain");
+  const pool = isCaptain ? CAPTAIN_ATTACK_VERBS : BANDIT_ATTACK_VERBS;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function enemyHpDescription(enemy: Enemy): string {
+  const ratio = enemy.hp / enemy.maxHp;
+  if (ratio > 0.75) return "looking confident";
+  if (ratio > 0.5) return "breathing hard";
+  if (ratio > 0.25) return "staggering but dangerous";
+  return "barely standing — finish them!";
+}
+
+function makeEnemy(): Enemy {
+  const roll = Math.random();
+  if (roll < 0.25) {
+    const hp = randomInt(4, 6);
+    return { name: "Bandit Scout", hp, maxHp: hp };
+  }
+  if (roll < 0.7) {
+    const hp = randomInt(6, 9);
+    return { name: "Bandit", hp, maxHp: hp };
+  }
+  const hp = randomInt(10, 14);
+  return { name: "Bandit Captain", hp, maxHp: hp };
+}
+
+function makeRaid(): Enemy[] {
+  const count = randomInt(2, 4);
+  return Array.from({ length: count }, () => makeEnemy());
+}
+
+function activeTarget(state: GameState): Enemy | null {
+  const idx = state.targetIndex < state.enemies.length ? state.targetIndex : 0;
+  return state.enemies[idx] ?? null;
+}
+
+function withoutEnemy(enemies: Enemy[], index: number): { enemies: Enemy[]; targetIndex: number } {
+  const next = enemies.filter((_, i) => i !== index);
+  return { enemies: next, targetIndex: Math.max(0, Math.min(index, next.length - 1)) };
 }
 
 export function createInitialGame(): GameState {
@@ -171,7 +224,8 @@ export function createInitialGame(): GameState {
     groundWeapon: "Sword",
     inventory: [],
     equipped: null,
-    enemy: null,
+    enemies: [],
+    targetIndex: 0,
     defending: false,
     sceneTitle: "You wake up in the guard barracks with a village to watch and trouble beyond the gate.",
     sceneBody: "Start in the village, head to the shop for gear, or step outside the gate when you are ready to face bandits.",
@@ -195,8 +249,13 @@ export function getLocationLabel(location: Location) {
 }
 
 export function getLocationPrompt(state: GameState) {
-  if (state.enemy) {
-    return "Bandits are attacking. Use the combat actions at the bottom.";
+  if (state.enemies.length > 0) {
+    const targetIdx = state.targetIndex < state.enemies.length ? state.targetIndex : 0;
+    const target = state.enemies[targetIdx];
+    const roster = state.enemies
+      .map((e, i) => `${i === targetIdx ? "▶ " : ""}${e.name} (HP ${e.hp}/${e.maxHp})`)
+      .join("  |  ");
+    return `Targeting: ${target.name} — ${enemyHpDescription(target)}.  ${roster}`;
   }
 
   switch (state.location) {
@@ -218,7 +277,7 @@ export function getShopItems() {
 export function getAvailableActions(state: GameState): ActionOption[] {
   const actions: ActionOption[] = [{ key: "look", label: "Look around", action: { type: "look" }, group: "Current" }];
 
-  if (state.enemy) {
+  if (state.enemies.length > 0) {
     actions.push(
       { key: "attack", label: "Attack", action: { type: "attack" }, group: "Combat", tone: "primary" },
       { key: "defend", label: "Defend", action: { type: "defend" }, group: "Combat" },
@@ -227,6 +286,18 @@ export function getAvailableActions(state: GameState): ActionOption[] {
 
     if (state.potions > 0) {
       actions.push({ key: "usePotion", label: "Use potion", action: { type: "usePotion" }, group: "Combat" });
+    }
+
+    if (state.enemies.length > 1) {
+      state.enemies.forEach((enemy, i) => {
+        actions.push({
+          key: `target-${i}`,
+          label: `Target ${enemy.name} (HP ${enemy.hp}/${enemy.maxHp})`,
+          action: { type: "setTarget", index: i },
+          group: "Target",
+          tone: i === state.targetIndex ? "accent" : undefined
+        });
+      });
     }
 
     return actions;
@@ -472,105 +543,147 @@ export function applyAction(state: GameState, action: GameAction): GameState {
         `You drink a ${potion.name.toLowerCase()} and recover ${potion.heal} HP.`
       );
 
-      if (!healedState.enemy) {
+      if (healedState.enemies.length === 0) {
         return healedState;
       }
 
       return enemyTurn({ ...healedState, defending: false });
     }
     case "triggerRaid": {
-      if (state.enemy) {
+      if (state.enemies.length > 0) {
         return pushLog(state, "You are already in a raid.");
       }
 
+      const raidEnemies = makeRaid();
+      const raidNames = raidEnemies.map((e) => e.name).join(", ");
       const raidState = pushLog(
         {
           ...state,
           location: "outside",
-          enemy: makeEnemy(),
+          enemies: raidEnemies,
+          targetIndex: 0,
           defending: false,
-          sceneTitle: "Bandits emerge from the fields and the watch becomes a fight.",
-          sceneBody: "A raid has started. Use the combat actions at the bottom."
+          sceneTitle: `${raidEnemies.length} raiders charge from the treeline — ${raidNames}!`,
+          sceneBody: getLocationPrompt({ ...state, enemies: raidEnemies, targetIndex: 0, defending: false })
         },
-        "A bandit raid begins outside the gate."
+        `${raidEnemies.length} bandits pour out of the fields: ${raidNames}. Target one and fight!`
       );
 
       // The raid opens with an immediate enemy swing so the player sees incoming damage right away.
       return enemyTurn(raidState);
     }
     case "attack": {
-      if (!state.enemy) {
+      if (state.enemies.length === 0) {
         return pushLog(state, "There is nothing to attack right now.");
       }
 
       const playerDamage = damageForWeapon(state.equipped);
-      const enemyHp = Math.max(0, state.enemy.hp - playerDamage);
+      const weaponLabel = state.equipped ? state.equipped.toLowerCase() : "fists";
+      const targetIdx = state.targetIndex < state.enemies.length ? state.targetIndex : 0;
+      const target = state.enemies[targetIdx];
+      const newTargetHp = Math.max(0, target.hp - playerDamage);
+      const targetDefeated = newTargetHp === 0;
+
+      let newEnemies: Enemy[];
+      let newTargetIndex: number;
+      if (targetDefeated) {
+        const result = withoutEnemy(state.enemies, targetIdx);
+        newEnemies = result.enemies;
+        newTargetIndex = result.targetIndex;
+      } else {
+        newEnemies = state.enemies.map((e, i) => (i === targetIdx ? { ...e, hp: newTargetHp } : e));
+        newTargetIndex = targetIdx;
+      }
+
+      const allDefeated = newEnemies.length === 0;
+      const remaining = newEnemies.length;
 
       let nextState: GameState = pushLog(
         {
           ...state,
-          enemy: enemyHp === 0 ? null : { ...state.enemy, hp: enemyHp },
-          sceneTitle:
-            enemyHp === 0
-              ? "The bandit falls and the field grows quiet again."
-              : "The raid continues, and the bandit is still on its feet.",
-          sceneBody:
-            enemyHp === 0
-              ? "The road is clear again, and you can return to normal travel actions."
-              : "The bandit is still standing, so combat actions remain available."
+          enemies: newEnemies,
+          targetIndex: newTargetIndex,
+          sceneTitle: allDefeated
+            ? "All raiders are down — the field falls quiet."
+            : targetDefeated
+            ? `The ${target.name} falls! ${remaining} raider${remaining > 1 ? "s" : ""} still standing.`
+            : `${target.name} reels (HP ${newTargetHp}/${target.maxHp}) — ${remaining} raider${remaining > 1 ? "s" : ""} remain.`,
+          sceneBody: allDefeated
+            ? "The road is clear. You can return to normal travel actions."
+            : getLocationPrompt({ ...state, enemies: newEnemies, targetIndex: newTargetIndex, defending: false })
         },
-        `You strike for ${playerDamage} damage.`
+        targetDefeated
+          ? `You drive your ${weaponLabel} into the ${target.name} for ${playerDamage} damage. They are down!`
+          : `You swing your ${weaponLabel} at the ${target.name} for ${playerDamage} damage. ${enemyHpDescription({ ...target, hp: newTargetHp })}.`
       );
 
-      if (enemyHp === 0) {
-        return {
-          ...nextState,
-          gold: nextState.gold + 5,
-          defending: false,
-          log: ["You earn 5 gold from the fallen bandit.", ...nextState.log].slice(0, 6)
-        };
+      if (targetDefeated) {
+        nextState = { ...nextState, gold: nextState.gold + 5 };
+        nextState = pushLog(nextState, `You search the fallen ${target.name} and find 5 gold.`);
       }
 
-      nextState = enemyTurn({ ...nextState, defending: false });
-      return nextState;
+      if (allDefeated) {
+        return { ...nextState, defending: false };
+      }
+
+      return enemyTurn({ ...nextState, defending: false });
     }
     case "defend": {
-      if (!state.enemy) {
+      if (state.enemies.length === 0) {
         return pushLog(state, "You brace yourself, but there is no attacker yet.");
       }
 
+      const defTarget = activeTarget(state)!;
       return enemyTurn({
         ...state,
         defending: true,
-        sceneTitle: "You lower your stance and prepare to absorb the next blow.",
-        sceneBody: "Your next enemy hit will be reduced."
+        sceneTitle: `You raise your guard against the ${defTarget.name}.`,
+        sceneBody: `${defTarget.name} (HP ${defTarget.hp}/${defTarget.maxHp}) presses in — the incoming blow will be halved.`
       });
     }
     case "run": {
-      if (!state.enemy) {
+      if (state.enemies.length === 0) {
         return pushLog(state, "You are not in danger, so there is nothing to flee from.");
       }
+
+      const escapeLabel = state.enemies.length > 1 ? `${state.enemies.length} bandits` : `the ${state.enemies[0].name}`;
 
       if (Math.random() < 0.5) {
         return pushLog(
           {
             ...state,
-            enemy: null,
+            enemies: [],
+            targetIndex: 0,
             defending: false,
             location: "village",
-            sceneTitle: "You get away and slip back toward the village gate.",
-            sceneBody: getLocationPrompt({ ...state, location: "village", enemy: null, defending: false })
+            sceneTitle: `You break away from ${escapeLabel} and sprint for the gate!`,
+            sceneBody: getLocationPrompt({ ...state, location: "village", enemies: [], targetIndex: 0, defending: false })
           },
-          "You escape the raid and return to the village."
+          `You escape ${escapeLabel} and make it back to the village.`
         );
       }
 
       return enemyTurn({
         ...state,
         defending: false,
-        sceneTitle: "You fail to escape and the bandit presses the attack.",
-        sceneBody: "The combat actions remain available until the fight ends."
+        sceneTitle: `${escapeLabel.charAt(0).toUpperCase() + escapeLabel.slice(1)} cut off your escape!`,
+        sceneBody: getLocationPrompt(state)
       });
+    }
+    case "setTarget": {
+      if (action.index < 0 || action.index >= state.enemies.length) {
+        return pushLog(state, "That target is not available.");
+      }
+      const newTarget = state.enemies[action.index];
+      return pushLog(
+        {
+          ...state,
+          targetIndex: action.index,
+          sceneTitle: `You shift focus to the ${newTarget.name}.`,
+          sceneBody: getLocationPrompt({ ...state, targetIndex: action.index })
+        },
+        `You target the ${newTarget.name} (HP ${newTarget.hp}/${newTarget.maxHp}, ${enemyHpDescription(newTarget)}).`
+      );
     }
     default:
       return state;
@@ -578,46 +691,45 @@ export function applyAction(state: GameState, action: GameAction): GameState {
 }
 
 function enemyTurn(state: GameState): GameState {
-  if (!state.enemy) {
+  if (state.enemies.length === 0) {
     return state;
   }
 
+  // A random surviving enemy takes a swing.
+  const attackerIdx = Math.floor(Math.random() * state.enemies.length);
+  const attacker = state.enemies[attackerIdx];
   const incoming = banditAttack();
   const appliedDamage = state.defending ? Math.ceil(incoming / 2) : incoming;
   const nextHp = Math.max(0, state.playerHp - appliedDamage);
-  const attackerLabel = state.enemy.name.toLowerCase().includes("captain") ? "bandit captain" : "bandit";
+  const verb = enemyAttackVerb(attacker.name);
 
   if (nextHp === 0) {
     return pushLog(
       {
         ...state,
         playerHp: state.playerMaxHp,
-        enemy: null,
+        enemies: [],
+        targetIndex: 0,
         defending: false,
         location: "village",
-        sceneTitle: "A bandit strike drops you, but the village pulls you back to safety.",
+        sceneTitle: `The ${attacker.name}'s blow drops you — villagers drag you back through the gate.`,
         sceneBody: "You recover in the barracks at full health. Restock and return when ready."
       },
-      `A ${attackerLabel} strikes you. You lose ${appliedDamage} life and collapse. Villagers drag you back to the barracks (HP ${state.playerMaxHp}/${state.playerMaxHp}).`
+      `The ${attacker.name} ${verb} and deals ${appliedDamage} — you collapse. Villagers haul you to safety (HP ${state.playerMaxHp}/${state.playerMaxHp}).`
     );
   }
 
+  const survivalNote = nextHp <= state.playerMaxHp * 0.3 ? " You are badly wounded!" : "";
   return pushLog(
     {
       ...state,
       playerHp: nextHp,
       defending: false,
-      sceneTitle:
-        nextHp === 0
-          ? "The raid overwhelms you, and the village loses its guard for now."
-          : "You remain in the fight after weathering the counterattack.",
-      sceneBody:
-        nextHp === 0
-          ? "You have been overwhelmed, so the current encounter ends here."
-          : "The fight is still active and the combat actions remain available."
+      sceneTitle: `The ${attacker.name} hits you for ${appliedDamage}${state.defending ? " (blocked)" : ""} — you have ${nextHp} HP left.`,
+      sceneBody: getLocationPrompt({ ...state, enemies: state.enemies, defending: false })
     },
     state.defending
-      ? `A ${attackerLabel} strikes you. You block part of the blow and lose ${appliedDamage} life (HP ${nextHp}/${state.playerMaxHp}).`
-      : `A ${attackerLabel} strikes you. You lose ${appliedDamage} life (HP ${nextHp}/${state.playerMaxHp}).`
+      ? `The ${attacker.name} ${verb} — you block, taking ${appliedDamage} (HP ${nextHp}/${state.playerMaxHp}).${survivalNote}`
+      : `The ${attacker.name} ${verb} and hits for ${appliedDamage} (HP ${nextHp}/${state.playerMaxHp}).${survivalNote}`
   );
 }
