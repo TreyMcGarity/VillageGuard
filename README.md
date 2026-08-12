@@ -2,6 +2,8 @@
 
 VillageGuard is now moving toward a browser-based version. The current implementation work lives in the `web/` folder as a client-only Next.js app that can be exported statically for GitHub Pages.
 
+hosted link: https://treymcgarity.github.io/VillageGuard/
+
 ## Current status
 
 - The original Java console game still exists in `src/`.
