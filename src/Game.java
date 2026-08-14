@@ -180,18 +180,10 @@ public class Game {
                 if (!target.isAlive()) { System.out.println(target.getName() + " is already down."); continue; }
 
                 int dmg = player.attack();
-                System.out.println(player.getName() + " attacks " + target.getName() + " for " + dmg);
-                target.receiveDamage(dmg);
+                applyDamageWithFeedback(player.getName(), target, dmg, "attacks");
                 if (!target.isAlive()) { System.out.println(target.getName() + " collapses!"); player.addGold(5); }
 
-                List<Bandit> alive = new ArrayList<>();
-                for (Bandit b2 : bandits) if (b2.isAlive()) alive.add(b2);
-                if (!alive.isEmpty()) {
-                    Bandit attacker = alive.get(RNG.nextInt(alive.size()));
-                    int bd = attacker.attack();
-                    System.out.println(attacker.getName() + " retaliates for " + bd + " damage.");
-                    player.receiveDamage(bd);
-                }
+                if (anyBanditsAlive()) banditsTakeTurn("The bandits surge forward!");
 
             } else if (cmd.equals("status")) {
                 renderCombatState();
@@ -200,38 +192,47 @@ public class Game {
                 String what = parts[1].toLowerCase();
                 if (what.equals("potion") || what.equals("health_potion")) {
                     if (!player.usePotion()) System.out.println("You have no potions to use.");
-                    else {
-                        List<Bandit> alive4 = new ArrayList<>();
-                        for (Bandit b2 : bandits) if (b2.isAlive()) alive4.add(b2);
-                        if (!alive4.isEmpty()) {
-                            Bandit attacker = alive4.get(RNG.nextInt(alive4.size()));
-                            int bd = attacker.attack();
-                            System.out.println(attacker.getName() + " attacks while you use the potion for " + bd + " damage.");
-                            player.receiveDamage(bd);
-                        }
-                    }
+                    else banditsTakeTurn("While you drink, the bandits keep attacking!");
                 } else System.out.println("You can't use that in combat.");
             } else if (cmd.equals("defend")) {
                 player.defend();
-                List<Bandit> alive2 = new ArrayList<>();
-                for (Bandit b2 : bandits) if (b2.isAlive()) alive2.add(b2);
-                if (!alive2.isEmpty()) {
-                    Bandit attacker = alive2.get(RNG.nextInt(alive2.size()));
-                    int bd = attacker.attack();
-                    System.out.println(attacker.getName() + " attacks while you defend for " + bd + " damage.");
-                    player.receiveDamage(bd);
-                }
+                banditsTakeTurn("You brace for impact...");
             } else if (cmd.equals("run")) {
                 System.out.println("You attempt to run away...");
                 if (RNG.nextDouble() < 0.5) { System.out.println("You escape!"); return; }
                 else {
-                    System.out.println("You fail to escape. A single bandit attacks!");
-                    List<Bandit> alive3 = new ArrayList<>();
-                    for (Bandit b2 : bandits) if (b2.isAlive()) alive3.add(b2);
-                    if (!alive3.isEmpty()) player.receiveDamage(alive3.get(RNG.nextInt(alive3.size())).attack());
+                    System.out.println("You fail to escape!");
+                    banditsTakeTurn("You stumble, and the bandits punish the mistake!");
                 }
             } else System.out.println("Unknown combat command: " + cmd);
         }
+    }
+
+    private void banditsTakeTurn(String leadIn) {
+        List<Bandit> attackers = aliveBandits();
+        if (attackers.isEmpty()) return;
+
+        System.out.println(leadIn);
+        for (Bandit attacker : attackers) {
+            if (!player.isAlive()) break;
+            int dmg = attacker.attack();
+            applyDamageWithFeedback(attacker.getName(), player, dmg, "hits");
+        }
+    }
+
+    private List<Bandit> aliveBandits() {
+        List<Bandit> alive = new ArrayList<>();
+        for (Bandit b : bandits) if (b.isAlive()) alive.add(b);
+        return alive;
+    }
+
+    private void applyDamageWithFeedback(String attackerName, Entity target, int rolledDamage, String verb) {
+        int before = target.getHp();
+        target.receiveDamage(rolledDamage);
+        int after = target.getHp();
+        int actualDamage = before - after;
+        String reducedNote = actualDamage < rolledDamage ? " (reduced from " + rolledDamage + ")" : "";
+        System.out.println(attackerName + " " + verb + " " + target.getName() + " for " + actualDamage + " damage" + reducedNote + " [" + before + " -> " + after + " HP]");
     }
 
     private boolean anyBanditsAlive() { for (Bandit b : bandits) if (b.isAlive()) return true; return false; }
