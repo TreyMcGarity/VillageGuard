@@ -42,8 +42,13 @@ export interface ShopItem {
 export interface GameState {
   playerHp: number;
   playerMaxHp: number;
+  level: number;
+  xp: number;
+  xpToNext: number;
   gold: number;
   potions: number;
+  raidsTriggered: number;
+  raidsWon: number;
   location: Location;
   groundWeapon: string | null;
   inventory: string[];
@@ -150,6 +155,54 @@ function damageForWeapon(weapon: string | null) {
   return 2;
 }
 
+function playerAttackDamage(weapon: string | null, level: number) {
+  const base = damageForWeapon(weapon);
+  const levelBonus = Math.floor((level - 1) / 2);
+  return base + levelBonus;
+}
+
+function xpRequiredForLevel(level: number) {
+  return 12 + (level - 1) * 8;
+}
+
+function enemyXpValue(name: string) {
+  const normalized = name.toLowerCase();
+  if (normalized.includes("captain")) return 14;
+  if (normalized.includes("scout")) return 5;
+  return 8;
+}
+
+function grantXp(state: GameState, amount: number): GameState {
+  if (amount <= 0) return state;
+
+  let next = pushLog(state, `You gain ${amount} XP.`);
+  let remaining = amount;
+
+  while (remaining > 0) {
+    const needed = next.xpToNext - next.xp;
+    const applied = Math.min(remaining, needed);
+    next = { ...next, xp: next.xp + applied };
+    remaining -= applied;
+
+    if (next.xp >= next.xpToNext) {
+      const newLevel = next.level + 1;
+      const newMaxHp = next.playerMaxHp + 3;
+      const recoveredHp = Math.min(newMaxHp, next.playerHp + 3);
+      next = {
+        ...next,
+        level: newLevel,
+        xp: 0,
+        xpToNext: xpRequiredForLevel(newLevel),
+        playerMaxHp: newMaxHp,
+        playerHp: recoveredHp
+      };
+      next = pushLog(next, `Level up! You are now level ${newLevel}. Max HP increased to ${newMaxHp}.`);
+    }
+  }
+
+  return next;
+}
+
 const BANDIT_ATTACK_VERBS = [
   "slashes at you",
   "lunges with a blade",
@@ -185,23 +238,37 @@ function enemyHpDescription(enemy: Enemy): string {
   return "barely standing — finish them!";
 }
 
-function makeEnemy(): Enemy {
+function makeEnemyForLevel(level: number, firstRaid: boolean): Enemy {
+  const clampedLevel = Math.max(1, level);
+  const captainChance = firstRaid ? 0 : Math.min(0.1 + (clampedLevel - 2) * 0.08, 0.35);
+  const scoutChance = clampedLevel <= 1 ? 0.45 : 0.25;
   const roll = Math.random();
-  if (roll < 0.25) {
-    const hp = randomInt(4, 6);
+
+  if (roll < scoutChance) {
+    const hp = randomInt(4, 6) + Math.floor((clampedLevel - 1) / 3);
     return { name: "Bandit Scout", hp, maxHp: hp };
   }
-  if (roll < 0.7) {
-    const hp = randomInt(6, 9);
+
+  if (roll < 1 - captainChance) {
+    const hp = randomInt(6, 9) + Math.floor((clampedLevel - 1) / 2);
     return { name: "Bandit", hp, maxHp: hp };
   }
-  const hp = randomInt(10, 14);
+
+  const hp = randomInt(10, 14) + Math.max(0, clampedLevel - 2);
   return { name: "Bandit Captain", hp, maxHp: hp };
 }
 
-function makeRaid(): Enemy[] {
-  const count = randomInt(2, 4);
-  return Array.from({ length: count }, () => makeEnemy());
+function makeRaid(level: number, raidsTriggered: number): Enemy[] {
+  const firstRaid = raidsTriggered === 0;
+  let count: number;
+
+  if (firstRaid) count = 2;
+  else if (level <= 1) count = randomInt(2, 3);
+  else if (level === 2) count = randomInt(2, 3);
+  else if (level === 3) count = randomInt(3, 4);
+  else count = randomInt(3, 5);
+
+  return Array.from({ length: count }, () => makeEnemyForLevel(level, firstRaid));
 }
 
 function activeTarget(state: GameState): Enemy | null {
@@ -218,8 +285,13 @@ export function createInitialGame(): GameState {
   return {
     playerHp: 20,
     playerMaxHp: 20,
+    level: 1,
+    xp: 0,
+    xpToNext: xpRequiredForLevel(1),
     gold: 10,
     potions: 0,
+    raidsTriggered: 0,
+    raidsWon: 0,
     location: "village",
     groundWeapon: "Sword",
     inventory: [],
@@ -554,12 +626,13 @@ export function applyAction(state: GameState, action: GameAction): GameState {
         return pushLog(state, "You are already in a raid.");
       }
 
-      const raidEnemies = makeRaid();
+      const raidEnemies = makeRaid(state.level, state.raidsTriggered);
       const raidNames = raidEnemies.map((e) => e.name).join(", ");
       const raidState = pushLog(
         {
           ...state,
           location: "outside",
+          raidsTriggered: state.raidsTriggered + 1,
           enemies: raidEnemies,
           targetIndex: 0,
           defending: false,
@@ -577,7 +650,7 @@ export function applyAction(state: GameState, action: GameAction): GameState {
         return pushLog(state, "There is nothing to attack right now.");
       }
 
-      const playerDamage = damageForWeapon(state.equipped);
+      const playerDamage = playerAttackDamage(state.equipped, state.level);
       const weaponLabel = state.equipped ? state.equipped.toLowerCase() : "fists";
       const targetIdx = state.targetIndex < state.enemies.length ? state.targetIndex : 0;
       const target = state.enemies[targetIdx];
@@ -620,10 +693,13 @@ export function applyAction(state: GameState, action: GameAction): GameState {
       if (targetDefeated) {
         nextState = { ...nextState, gold: nextState.gold + 5 };
         nextState = pushLog(nextState, `You search the fallen ${target.name} and find 5 gold.`);
+        nextState = grantXp(nextState, enemyXpValue(target.name));
       }
 
       if (allDefeated) {
-        return { ...nextState, defending: false };
+        const clearBonusXp = 6 + Math.max(0, state.level - 1) * 2;
+        const withBonus = grantXp({ ...nextState, raidsWon: nextState.raidsWon + 1 }, clearBonusXp);
+        return pushLog({ ...withBonus, defending: false }, `Raid cleared! Bonus ${clearBonusXp} XP.`);
       }
 
       return enemyTurn({ ...nextState, defending: false });

@@ -29,6 +29,7 @@ export default function Home() {
 
   const actions = useMemo(() => getAvailableActions(game), [game]);
   const shopItems = useMemo(() => getShopItems(), []);
+  const xpPercent = Math.max(0, Math.min(100, (game.xp / game.xpToNext) * 100));
 
   function runAction(action: GameAction) {
     setGame((current) => applyAction(current, action));
@@ -126,9 +127,21 @@ export default function Home() {
           </div>
           <div className="stats-grid">
             {statCard("HP", `${game.playerHp}/${game.playerMaxHp}`)}
+            {statCard("Level", `${game.level}`)}
             {statCard("Gold", `${game.gold}`)}
             {statCard("Potions", `${game.potions}`)}
             {statCard("Weapon", game.equipped ?? "Unarmed")}
+          </div>
+          <div className="xp-panel" aria-label="Experience progress">
+            <div className="xp-meta">
+              <span>XP</span>
+              <strong>
+                {game.xp}/{game.xpToNext}
+              </strong>
+            </div>
+            <div className="xp-track" role="progressbar" aria-valuemin={0} aria-valuemax={game.xpToNext} aria-valuenow={game.xp}>
+              <span className="xp-fill" style={{ width: `${xpPercent}%` }} />
+            </div>
           </div>
           <div className="mini-copy">
             <p>Inventory: {game.inventory.length ? game.inventory.join(", ") : "Empty"}</p>
@@ -140,7 +153,6 @@ export default function Home() {
         <div className="terminal-head">
           <div>
             <p className="scene-kicker">Terminal</p>
-            <h2>Quicklinks and typed actions</h2>
           </div>
           <p>{getLocationPrompt(game)}</p>
         </div>
