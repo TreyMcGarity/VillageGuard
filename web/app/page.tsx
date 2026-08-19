@@ -118,6 +118,7 @@ export default function Home() {
           <p className="eyebrow">VillageGuard</p>
           <h1>{game.sceneTitle}</h1>
           <p className="lede">{game.sceneBody || getLocationPrompt(game)}</p>
+          {game.location === "village" && game.dialogue ? <p className="scene-dialogue">{game.dialogue}</p> : null}
         </div>
 
         <aside className="hero-panel">

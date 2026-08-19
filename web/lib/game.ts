@@ -1,4 +1,27 @@
 export type Location = "village" | "shop" | "outside";
+export type QuestStatus = "available" | "active" | "completed";
+
+export interface NPC {
+  id: string;
+  name: string;
+  title: string;
+  blurb: string;
+  greeting: string;
+  rumor: string;
+}
+
+export interface QuestState {
+  id: string;
+  title: string;
+  description: string;
+  npcId: string;
+  target: number;
+  progress: number;
+  rewardXp: number;
+  rewardGold: number;
+  rewardPotions: number;
+  status: QuestStatus;
+}
 
 export type GameAction =
   | { type: "look" }
@@ -9,6 +32,10 @@ export type GameAction =
   | { type: "equipWeapon"; weaponName: string }
   | { type: "buyItem"; itemId: string }
   | { type: "usePotion" }
+  | { type: "talkToNpc"; npcId: string }
+  | { type: "acceptQuest"; questId: string }
+  | { type: "completeQuest"; questId: string }
+  | { type: "restAtInn" }
   | { type: "triggerRaid" }
   | { type: "attack" }
   | { type: "defend" }
@@ -56,9 +83,98 @@ export interface GameState {
   enemies: Enemy[];
   targetIndex: number;
   defending: boolean;
+  selectedNpcId: string | null;
+  dialogue: string;
+  quests: QuestState[];
+  villageRumors: string[];
   sceneTitle: string;
   sceneBody: string;
   log: string[];
+}
+
+export const VILLAGE_NPCS: NPC[] = [
+  {
+    id: "elder",
+    name: "Elder Rowan",
+    title: "Village elder",
+    blurb: "Keeps the square calm and the town informed.",
+    greeting: "The village needs steady hands. If you can keep the road safe, we can all breathe easier.",
+    rumor: "Bandits have been seen near the north road. Watch your step if you head outside the gate."
+  },
+  {
+    id: "shopkeeper",
+    name: "Mira",
+    title: "Shopkeeper",
+    blurb: "Sells tools, blades, and much-needed potions.",
+    greeting: "A good blade is worth more than luck. Take a look at what I have before you go beyond the gate.",
+    rumor: "Fresh spears sell fast in a nervous town, and the watch always needs more stock."
+  },
+  {
+    id: "innkeeper",
+    name: "Bram",
+    title: "Innkeeper",
+    blurb: "Keeps the inn warm, the beds full, and the gossip flowing.",
+    greeting: "You look tired. Rest a while and listen to what the village is whispering tonight.",
+    rumor: "There are whispers of a larger bandit crew gathering near the old bridge."
+  }
+];
+
+const VILLAGE_RUMORS = [
+  "The blacksmith swears he heard metal clanging past midnight.",
+  "A wagon of grain was found overturned near the south road.",
+  "The scouts say a captain has been moving men between the fields and the ruins.",
+  "The old well has been drawing odd sounds at dusk lately."
+];
+
+function randomItem<T>(items: T[]): T {
+  return items[Math.floor(Math.random() * items.length)];
+}
+
+function makeInitialQuests(): QuestState[] {
+  return [
+    {
+      id: "roadside-watch",
+      title: "Roadside Watch",
+      description: "Defeat 2 bandit raiders outside the village gates to keep the road safe.",
+      npcId: "elder",
+      target: 2,
+      progress: 0,
+      rewardXp: 30,
+      rewardGold: 20,
+      rewardPotions: 1,
+      status: "available"
+    }
+  ];
+}
+
+function updateQuestProgress(state: GameState, completedRaidCount: number): GameState {
+  if (completedRaidCount <= 0) {
+    return state;
+  }
+
+  const nextQuests: QuestState[] = state.quests.map((quest) => {
+    if (quest.id !== "roadside-watch" || quest.status === "completed") {
+      return quest;
+    }
+
+    const progress = Math.min(quest.target, quest.progress + completedRaidCount);
+    return { ...quest, progress, status: "active" };
+  });
+
+  return { ...state, quests: nextQuests };
+}
+
+function getNpcById(npcId: string | null) {
+  if (!npcId) return null;
+  return VILLAGE_NPCS.find((npc) => npc.id === npcId) ?? null;
+}
+
+function getQuestForNpc(state: GameState, npcId: string) {
+  return state.quests.find((quest) => quest.npcId === npcId && quest.status !== "completed") ?? null;
+}
+
+function isQuestReadyForCompletion(quest: QuestState) {
+  return quest.progress >= quest.target && quest.status === "active";
 }
 
 const SHOP_ITEMS: ShopItem[] = [
@@ -282,6 +398,8 @@ function withoutEnemy(enemies: Enemy[], index: number): { enemies: Enemy[]; targ
 }
 
 export function createInitialGame(): GameState {
+  const initialDialogue = "The village square is waking up. Mira is stacking supplies, Bram is wiping down the inn counter, and Elder Rowan is watching the gate with concern.";
+
   return {
     playerHp: 20,
     playerMaxHp: 20,
@@ -299,6 +417,13 @@ export function createInitialGame(): GameState {
     enemies: [],
     targetIndex: 0,
     defending: false,
+    selectedNpcId: "elder",
+    dialogue: initialDialogue,
+    quests: makeInitialQuests(),
+    villageRumors: [
+      "A farmer says major trouble is moving about the north field.",
+      "The inn is buzzing with talk of bandits near the bridge."
+    ],
     sceneTitle: "You wake up in the guard barracks with a village to watch and trouble beyond the gate.",
     sceneBody: "Start in the village, head to the shop for gear, or step outside the gate when you are ready to face bandits.",
     log: [
@@ -378,8 +503,39 @@ export function getAvailableActions(state: GameState): ActionOption[] {
   if (state.location === "village") {
     actions.push(
       { key: "goToShop", label: "Go to shop", action: { type: "goToShop" }, group: "Travel", tone: "primary" },
-      { key: "enterGate", label: "Enter gate", action: { type: "enterGate" }, group: "Travel" }
+      { key: "enterGate", label: "Enter gate", action: { type: "enterGate" }, group: "Travel" },
+      { key: "restAtInn", label: "Rest at inn", action: { type: "restAtInn" }, group: "Village" }
     );
+
+    VILLAGE_NPCS.forEach((npc) => {
+      actions.push({
+        key: `talk-${npc.id}`,
+        label: `Talk to ${npc.name}`,
+        action: { type: "talkToNpc", npcId: npc.id },
+        group: "Village"
+      });
+    });
+
+    const elderQuest = state.quests.find((quest) => quest.npcId === "elder" && quest.status !== "completed");
+    if (elderQuest && elderQuest.status === "available") {
+      actions.push({
+        key: `accept-${elderQuest.id}`,
+        label: `Accept ${elderQuest.title}`,
+        action: { type: "acceptQuest", questId: elderQuest.id },
+        group: "Quests",
+        tone: "accent"
+      });
+    }
+
+    if (state.quests.some((quest) => quest.status === "active" && quest.progress >= quest.target)) {
+      actions.push({
+        key: "completeQuest",
+        label: "Complete quest",
+        action: { type: "completeQuest", questId: state.quests.find((quest) => quest.status === "active" && quest.progress >= quest.target)!.id },
+        group: "Quests",
+        tone: "primary"
+      });
+    }
 
     if (state.groundWeapon) {
       actions.push({ key: "takeGroundWeapon", label: `Take ${state.groundWeapon}`, action: { type: "takeGroundWeapon" }, group: "Village" });
@@ -479,7 +635,8 @@ export function applyAction(state: GameState, action: GameAction): GameState {
           ...state,
           location: "shop",
           sceneTitle: "You step into the shop and scan the shelves for better gear.",
-          sceneBody: "Choose from the displayed weapons and potions, then return to the village when you are ready."
+          sceneBody: "Choose from the displayed weapons and potions, then return to the village when you are ready.",
+          selectedNpcId: "shopkeeper"
         },
         "You head to the village shop."
       );
@@ -494,7 +651,8 @@ export function applyAction(state: GameState, action: GameAction): GameState {
           ...state,
           location: "village",
           sceneTitle: "You leave the shop and return to the village square.",
-          sceneBody: getLocationPrompt({ ...state, location: "village" })
+          sceneBody: getLocationPrompt({ ...state, location: "village" }),
+          selectedNpcId: "shopkeeper"
         },
         "You walk back into the village."
       );
@@ -621,6 +779,101 @@ export function applyAction(state: GameState, action: GameAction): GameState {
 
       return enemyTurn({ ...healedState, defending: false });
     }
+    case "talkToNpc": {
+      const npc = getNpcById(action.npcId);
+      if (!npc) {
+        return pushLog(state, "There is no one to talk to here.");
+      }
+
+      const quest = getQuestForNpc(state, npc.id);
+      const questLine = quest
+        ? quest.status === "available"
+          ? `You can take the quest, ${quest.title}.`
+          : quest.progress >= quest.target
+          ? `You have finished ${quest.title}. Return and complete it.`
+          : `${quest.title} is in progress (${quest.progress}/${quest.target}).`
+        : "The town is quiet for now, but the gossip is always moving.";
+
+      const rumor = randomItem(state.villageRumors.length > 0 ? state.villageRumors : [npc.rumor]);
+      return pushLog(
+        {
+          ...state,
+          selectedNpcId: npc.id,
+          dialogue: `${npc.name}: "${npc.greeting}" ${questLine} ${rumor}`,
+          sceneTitle: `${npc.name} is listening by the square.`,
+          sceneBody: `You speak with ${npc.name}, the ${npc.title.toLowerCase()}.`
+        },
+        `${npc.name} says: "${npc.greeting}"`
+      );
+    }
+    case "acceptQuest": {
+      const quest = state.quests.find((item) => item.id === action.questId);
+      if (!quest) {
+        return pushLog(state, "That quest is not available.");
+      }
+
+      if (quest.status !== "available") {
+        return pushLog(state, "You already accepted that task.");
+      }
+
+      return pushLog(
+        {
+          ...state,
+          quests: state.quests.map((item) => (item.id === action.questId ? { ...item, status: "active" } : item)),
+          dialogue: `${quest.title}: ${quest.description}`,
+          sceneTitle: `${quest.title} accepted.`,
+          sceneBody: "The village is counting on you. Return when the road is clear and your work is done."
+        },
+        `You accept the ${quest.title} quest from ${getNpcById(quest.npcId)?.name ?? "the village"}.`
+      );
+    }
+    case "completeQuest": {
+      const quest = state.quests.find((item) => item.id === action.questId);
+      if (!quest) {
+        return pushLog(state, "That quest cannot be completed right now.");
+      }
+
+      if (quest.status !== "active" || quest.progress < quest.target) {
+        return pushLog(state, `The ${quest.title} quest is not ready yet.`);
+      }
+
+      const rewardedState = pushLog(
+        {
+          ...state,
+          gold: state.gold + quest.rewardGold,
+          potions: state.potions + quest.rewardPotions,
+          quests: state.quests.map((item) => (item.id === action.questId ? { ...item, status: "completed" } : item)),
+          dialogue: `${quest.title} complete. The village is grateful, and your pack feels a little heavier.`,
+          sceneTitle: `${quest.title} complete!`,
+          sceneBody: "The village grows calmer, and the road feels safer for everyone."
+        },
+        `You complete ${quest.title} and earn ${quest.rewardXp} XP, ${quest.rewardGold} gold, and ${quest.rewardPotions} potion${quest.rewardPotions === 1 ? "" : "s"}.`
+      );
+
+      return grantXp(rewardedState, quest.rewardXp);
+    }
+    case "restAtInn": {
+      if (state.location !== "village") {
+        return pushLog(state, "You can only rest at the inn in the village.");
+      }
+
+      if (state.gold < 4) {
+        return pushLog(state, "Bram says the inn has beds for paying guests, and you do not have enough coin.");
+      }
+
+      const recovered = Math.min(state.playerMaxHp, state.playerHp + 8);
+      return pushLog(
+        {
+          ...state,
+          gold: state.gold - 4,
+          playerHp: recovered,
+          dialogue: `Bram: "Rest easy. The village has plenty of stories, and a few of them are worth hearing." ${randomItem(state.villageRumors)}`,
+          sceneTitle: "You take a warm bed in the inn and recover your strength.",
+          sceneBody: "The inn is quiet for a while, and the village gossip makes the room feel alive."
+        },
+        `You pay 4 gold to rest at the inn and recover ${recovered - state.playerHp} HP.`
+      );
+    }
     case "triggerRaid": {
       if (state.enemies.length > 0) {
         return pushLog(state, "You are already in a raid.");
@@ -642,7 +895,6 @@ export function applyAction(state: GameState, action: GameAction): GameState {
         `${raidEnemies.length} bandits pour out of the fields: ${raidNames}. Target one and fight!`
       );
 
-      // The raid opens with an immediate enemy swing so the player sees incoming damage right away.
       return enemyTurn(raidState);
     }
     case "attack": {
@@ -699,7 +951,8 @@ export function applyAction(state: GameState, action: GameAction): GameState {
       if (allDefeated) {
         const clearBonusXp = 6 + Math.max(0, state.level - 1) * 2;
         const withBonus = grantXp({ ...nextState, raidsWon: nextState.raidsWon + 1 }, clearBonusXp);
-        return pushLog({ ...withBonus, defending: false }, `Raid cleared! Bonus ${clearBonusXp} XP.`);
+        const questProgressed = updateQuestProgress({ ...withBonus, defending: false }, 1);
+        return pushLog({ ...questProgressed, defending: false }, `Raid cleared! Bonus ${clearBonusXp} XP.`);
       }
 
       return enemyTurn({ ...nextState, defending: false });
